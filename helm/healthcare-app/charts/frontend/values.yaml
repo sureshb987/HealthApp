@@ -1,0 +1,44 @@
+```yaml
+replicas: 2
+image: ""
+configMap:
+  enabled: true
+  name: healthcare-frontend-config
+secret:
+  enabled: true
+  name: healthcare-frontend-secrets
+resources:
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+livenessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 15
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 15
+  periodSeconds: 10
+networkPolicy:
+  enabled: true
+ingress:
+  enabled: true
+  hostname: "healthcare-app.corporate.io"
+```
+
+#### PostgreSQL Sub-Chart
+<xaiArtifact artifact_id="6596a502-c118-4816-9524-89424340185e" artifact_version_id="46fd2224-9d8f-4112-a824-0dd1d1a4aa24" title="helm/healthcare-app/charts/postgresql/Chart.yaml" contentType="text/yaml">
+```yaml
+apiVersion: v2
+name: postgresql
+description: PostgreSQL database for healthcare application
+version: 1.0.0
+appVersion: "12"
+```
