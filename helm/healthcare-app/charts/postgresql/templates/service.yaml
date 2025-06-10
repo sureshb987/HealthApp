@@ -1,0 +1,18 @@
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: healthcare-postgres
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: healthcare-postgres
+spec:
+  selector:
+    app: healthcare-postgres
+  ports:
+  - port: 5432
+    targetPort: 5432: 5432
+    protocol: TCP
+    name: postgres
+  type: ClusterIP
+```
