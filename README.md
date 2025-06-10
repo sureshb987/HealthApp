@@ -1,4 +1,4 @@
-tep-by-Step Implementation Guide
+Step-by-Step Implementation Guide
 1. Initialize GitHub Repository
 Action: Create a private repository at github.com/corporate/healthcare-app.
 Steps:
