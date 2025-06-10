@@ -1,0 +1,136 @@
+```yaml
+global:
+  namespace: healthcare
+  awsRegion: us-east-1
+  awsAccountId: "{{AWS_ACCOUNT_ID}}"
+  kmsKeyArn: "arn:aws:kms:us-east-1:{{AWS_ACCOUNT_ID}}:key/alias/healthcare-kms"
+  vaultAddr: "https://vault.corporate.io"
+  imagePullSecrets: []
+  monitoring:
+    enabled: true
+    prometheus:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+    grafana:
+      enabled: true
+      dashboard: "healthcare-app-dashboard"
+  logging:
+    enabled: true
+    fluentd:
+      cloudwatch:
+        enabled: true
+        logGroup: "/eks/healthcare-app"
+  externalSecrets:
+    enabled: true
+    vault:
+      enabled: true
+      address: "{{ .Values.global.vaultAddr }}"
+      role: "healthcare-app"
+
+backend:
+  enabled: true
+  image: "{{ .Values.global.awsAccountId }}.dkr.ecr.{{ .Values.global.awsRegion }}.amazonaws.com/healthcare-app:{{ .Values.imageTag }}"
+  replicas: 3
+  dbHost: "healthcare-postgres.{{ .Values.global.namespace }}.svc.cluster.local"
+  dbName: "patientdb"
+  dbUsername: "admin"
+  dbPasswordSecret: "healthcare-app-secrets"
+  configMap:
+    enabled: true
+    name: healthcare-backend-config
+  secret:
+    enabled: true
+    name: healthcare-app-secrets
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1024Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  networkPolicy:
+    enabled: true
+  ingress:
+    enabled: true
+    hostname: "api.healthcare-app.corporate.io"
+
+frontend:
+  enabled: true
+  image: "{{ .Values.global.awsAccountId }}.dkr.ecr.{{ .Values.global.awsRegion }}.amazonaws.com/healthcare-app-frontend:{{ .Values.imageTag }}"
+  replicas: 2
+  configMap:
+    enabled: true
+    name: healthcare-frontend-config
+  secret:
+    enabled: true
+    name: healthcare-frontend-secrets
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  networkPolicy:
+    enabled: true
+  ingress:
+    enabled: true
+    hostname: "healthcare-app.corporate.io"
+
+postgresql:
+  enabled: true
+  postgresqlUsername: "admin"
+  postgresqlDatabase: "patientdb"
+  postgresqlPasswordSecret: "healthcare-app-secrets"
+  configMap:
+    enabled: true
+    name: healthcare-postgres-config
+  secret:
+    enabled: true
+    name: healthcare-app-secrets
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1024Mi"
+  storage:
+    size: "20Gi"
+    storageClass: "gp2"
+  networkPolicy:
+    enabled: true
+  pv:
+    enabled: true
+    name: healthcare-postgres-pv
+  pvc:
+    enabled: true
+    name: healthcare-postgres-pvc
+
+imageTag: "latest"
+```
