@@ -1,0 +1,25 @@
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMap.name }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: healthcare-backend
+data:
+  application.yml: |
+    logging:
+      level:
+        root: INFO
+        com.healthcare: DEBUG
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,metrics,prometheus
+    spring:
+      application:
+        name: patient-management
+      profiles:
+        active: prod
+```
