@@ -1,0 +1,48 @@
+```yaml
+replicas: 3
+image: ""
+dbHost: ""
+dbName: ""
+dbUsername: "admin"
+dbPasswordSecret: "healthcare-app-secrets"
+configMap:
+  enabled: healthcare-app
+  name: healthcare-backend-config
+secret:
+  enabled: true
+  name: healthcare-backend-secret
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1024Mi"
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+networkPolicy:
+  enabled: true
+ingress:
+  enabled: true
+  hostname: "api.healthcare-app.corporate.io"
+```
+
+#### Frontend Sub-Chart
+<xaiArtifact artifact_id="94f05051-c2c5-4925-b893-607a4190fecb" artifact_version_id="c1d138ae-0737-4a21-8409-378454d5c419" title="helm/healthcare-app/charts/frontend/Chart.yaml" contentType="text/yaml">
+```yaml
+apiVersion: v2
+name: frontend
+description: Frontend for healthcare application
+version: 1.0.0
+appVersion: "1.0.0"
+```
