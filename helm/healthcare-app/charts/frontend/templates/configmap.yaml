@@ -1,0 +1,13 @@
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMap.name }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: healthcare-frontend
+data:
+  env.js: |
+    window.REACT_APP_API_URL = "http://healthcare-backend.{{ .Values.global.namespace }}.svc.cluster.local:8080/api";
+    window.REACT_APP_ENV = "prod";
+```
