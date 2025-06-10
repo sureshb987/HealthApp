@@ -1,0 +1,23 @@
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: healthcare-postgres
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: healthcare-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app: healthcare-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: healthcare-backend
+      ports:
+        - protocol: TCP
+          port: 5432
+```
