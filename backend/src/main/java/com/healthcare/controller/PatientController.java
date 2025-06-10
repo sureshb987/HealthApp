@@ -3,36 +3,88 @@ package com.healthcare.controller;
 
 import com.healthcare.model.Patient;
 import com.healthcare.repository.PatientRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.util.Arrays;
 import java.util.List;
 
-@RestController
-@RequestMapping("/api/patients")
-public class PatientController {
-    private static final Logger logger = LoggerFactory.getLogger(PatientController.class);
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-    @Autowired
+public class PatientControllerTest {
+
+    @Mock
     private PatientRepository patientRepository;
 
-    @GetMapping
-    public List<Patient> getAllPatients() {
-        logger.info("Fetching all patients");
-        return patientRepository.findAll();
+    @InjectMocks
+    private PatientController patientController;
+
+    private MockMvc mockMvc;
+    private ObjectMapper objectMapper;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        mockMvc = MockMvcBuilders.standaloneSetup(patientController).build();
+        objectMapper = new ObjectMapper();
     }
 
-    @PostMapping
-    public Patient createPatient(@RequestBody Patient patient) {
-        logger.info("Creating patient: {}", patient.getName());
-        return patientRepository.save(patient);
+    @Test
+    void getAllPatients_ReturnsPatientList() throws Exception {
+        Patient patient1 = new Patient();
+        patient1.setId(1L);
+        patient1.setName("John Doe");
+        patient1.setMedicalRecord("Record1");
+
+        Patient patient2 = new Patient();
+        patient2.setId(2L);
+        patient2.setName("Jane Smith");
+        patient2.setMedicalRecord("Record2");
+
+        List<Patient> patients = Arrays.asList(patient1, patient2);
+
+        when(patientRepository.findAll()).thenReturn(patients);
+
+        mockMvc.perform(get("/api/patients")
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(content().json(objectMapper.writeValueAsString(patients)));
     }
 
-    @GetMapping("/health")
-    public String healthCheck() {
-        logger.info("Health check endpoint accessed");
-        return "Patient Management API is healthy";
+    @Test
+    void createPatient_SavesAndReturnsPatient() throws Exception {
+        Patient patient = new Patient();
+        patient.setId(1L);
+        patient.setName("John Doe");
+        patient.setMedicalRecord("Record1");
+
+        when(patientRepository.save(any(Patient.class))).thenReturn(patient);
+
+        mockMvc.perform(post("/api/patients")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(patient)))
+                .andExpect(status().isOk())
+                .andExpect(content().json(objectMapper.writeValueAsString(patient)));
+    }
+
+    @Test
+    void healthCheck_ReturnsHealthy() throws Exception {
+        mockMvc.perform(get("/api/patients/health")
+                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Patient Management API is healthy"));
     }
 }
 ```
