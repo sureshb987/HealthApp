@@ -1,0 +1,48 @@
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthcare-postgres
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: healthcare-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: healthcare-postgres
+  template:
+    metadata:
+      labels:
+        app: healthcare-postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:12
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_USER
+          value: {{ .Values.postgresqlUsername }}
+        - name: POSTGRES_DB
+          value: {{ .Values.postgresqlDatabase }}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secret.name }}
+              key: db_password
+        resources: {{ .Values.resources | toYaml | nindent 12 }}
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ .Values.pvc.name }}
+      - name: init
+        configMap:
+          name: {{ .Values.configMap.name }}
+```
