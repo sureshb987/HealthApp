@@ -1,0 +1,40 @@
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthcare-frontend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: healthcare-frontend
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: healthcare-frontend
+  template:
+    metadata:
+      labels:
+        app: healthcare-frontend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "80"
+    spec:
+      imagePullSecrets: {{ .Values.global.imagePullSecrets | toYaml | nindent 8 }}
+      containers:
+      - name: frontend
+        image: {{ .Values.image }}
+        ports:
+        - containerPort: 80
+          name: http
+        resources: {{ .Values.resources | toYaml | nindent 12 }}
+        volumeMounts:
+        - name: config
+          mountPath: /usr/share/nginx/html/env.js
+          subPath: env.js
+        livenessProbe: {{ .Values.livenessProbe | toYaml | nindent 12 }}
+        readinessProbe: {{ .Values.readinessProbe | toYaml | nindent 12 }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ .Values.configMap.name }}
+```
