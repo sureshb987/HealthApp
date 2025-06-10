@@ -1,0 +1,29 @@
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: healthcare-frontend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: healthcare-frontend
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  rules:
+  - host: {{ .Values.ingress.hostname }}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: healthcare-frontend
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - {{ .Values.ingress.hostname }}
+    secretName: frontend-tls
+```
