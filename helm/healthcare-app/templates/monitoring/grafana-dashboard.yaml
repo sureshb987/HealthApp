@@ -1,0 +1,606 @@
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: healthcare-grafana-dashboard
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    grafana_dashboard: "true"
+data:
+  healthcare-app-dashboard.json: |
+    {
+      "title": "Healthcare App Dashboard",
+      "uid": "healthcare-app",
+      "panels": [
+        {
+          "id": "1",
+          "title": "HTTP Requests Rate",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "rate(http_server_requests_seconds_count{job=\"healthcare-backend\"}[5m])",
+              "legendFormat": "{{method}} {{uri}}"
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      }
+    }
+```
+
+#### Logging
+<xaiArtifact artifact_id="4926700e-2394-4131-891b-9f15a3132461" artifact_version_id="360222c1-818b-41cb-bb38-a96cc65d4007" title="helm/healthcare-app/templates/logging/fluentd-config.yaml" contentType="text/yaml">
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: fluentd
+data:
+  fluent.conf: |
+    <source>
+      @type tail
+      path /var/log/containers/*.log
+      pos_file /var/log/fluentd.pos
+      tag kubernetes.*
+      <parse>
+        @type json
+      </parse>
+    </source>
+    <match kubernetes.**>
+      @type cloudwatch_logs
+      log_group_name {{ .Values.global.logging.fluid.cloudwatch.logGroup }}
+      log_stream_name fluentd-${HOSTNAME}
+      region {{ .Values.global.awsRegion }}
+      auto_create_stream true
+    </match>
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: fluentd
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  template:
+    metadata:
+      labels:
+        app: fluentd
+    spec:
+      serviceAccountName: fluentd-sa
+      containers:
+      - name: fluentd
+        image: fluentd:v1.12
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            memory: "512Mi"
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: config
+          mountPath: /fluentd/etc
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: config
+        configMap:
+          name: fluentd-config
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentd-sa
+  namespace: {{ .Values.global.namespace }}
+```
+
+#### External Secrets
+<xaiArtifact artifact_id="e5f612a1-0dc5-4f34-b059-4ac93be60bd4" scope="helm/healthcare-app/templates/external-secrets.yaml" contentType="text/yaml">
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: healthcare-app-secrets
+  namespace: {{ .Values.global.namespace }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault
+    kind: ClusterSecretStore
+  target:
+    name: healthcare-app-secrets
+    creationPolicy: Owner
+  data:
+  - secretKey: db_password
+    remoteRef:
+      key: secret/healthcare/db
+      property: db_password
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: vault
+spec:
+  provider:
+    vault:
+      server: "{{ .Values.global.vaultAddr }}"
+      path: secret
+      version: v2
+      auth:
+        tokenSecretRef:
+          name: vault-token
+          key: token
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-token
+  namespace: {{ .Values.global.namespace }}
+type: Opaque
+data:
+  token: {{ .Values.global.vault_token | b64enc }}
+```
+
+### Jenkins Pipeline
+<xaiArtifact artifact_id="68c06261-0842-4548-9767-e01b6364e72e" artifact_version_id="154ea03c-b8bf-438b-b599-c0942f858424" title="Jenkinsfile" contentType="text/groovy">
+```
+pipeline {
+    agent any
+    environment {
+        AWS_REGION = 'us-east-1'
+        AWS_ACCOUNT_ID = credentials('aws-account-id')
+        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        IMAGE_NAME = 'healthcare-app'
+        IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+        NEXUS_URL = 'http://nexus.corporate.io:8081'
+        NEXUS_CREDS = credentials('nexus-credentials')
+        VAULT_ADDR = 'https://vault.corporate.io'
+        VAULT_TOKEN = credentials('vault-token')
+        SONARQUBE_URL = 'http://sonarqube.corporate.io:9000'
+        SONARQUBE_TOKEN = credentials('sonarqube-token')
+        SES_EMAIL = 'alerts@corporate.healthcare.io'
+        ENV_NAME = "${params.ENVIRONMENT ?: 'dev'}"
+        HELM_VALUES = "-f values-${ENV_NAME}.yaml"
+    }
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'staging', 'prod'], description: 'Deployment environment')
+    }
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
+        disableConcurrentBuilds()
+        timeout(time: 1, unit: 'HOURS')
+        timestamps()
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/corporate/healthcare-app.git', credentialsId: 'github-credentials'
+                sh 'git clean -fdx'
+            }
+        }
+        stage('Build and Test Backend') {
+            steps {
+                sh '''
+                    cd backend
+                    mvn clean package
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                '''
+            }
+        }
+        stage('Build and Test Frontend') {
+            steps {
+                sh '''
+                    cd frontend
+                    npm install
+                    npm run test
+                    docker build -t ${IMAGE_NAME}-frontend:${IMAGE_TAG} .
+                '''
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh 'cd backend && mvn sonar:sonar -Dsonar.host.url=${SONARQUBE_URL} -Dsonar.login=${SONARQUBE_TOKEN}'
+                }
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+        stage('Security Scans') {
+            parallel {
+                stage('OWASP Dependency-Check') {
+                    steps {
+                        sh '''
+                            dependency-check.sh --scan backend --format JSON --out dependency-check.json
+                            aws securityhub batch-import-findings --findings file://dependency-check.json --region ${AWS_REGION}
+                        '''
+                    }
+                }
+                stage('Trivy Scan') {
+                    steps {
+                        sh '''
+                            trivy image --format json -o trivy-report.json ${IMAGE_NAME}:${IMAGE_TAG}
+                            trivy image --format json -o trivy-frontend-report.json ${IMAGE_NAME}-frontend:${IMAGE_TAG}
+                            aws securityhub batch-import-findings --findings file://trivy-report.json --region ${AWS_REGION}
+                            aws securityhub batch-import-findings --findings file://trivy-frontend-report.json --region ${AWS_REGION}
+                        '''
+                    }
+                }
+            }
+        }
+        stage('Push Artifacts') {
+            steps {
+                sh """
+                    cd backend
+                    mvn deploy -DaltDeploymentRepository=nexus::default::http://${NEXUS_URL}/repository/maven-releases/ -DskipTests
+                    aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                    docker tag ${IMAGE_NAME}-frontend:${IMAGE_TAG} ${ECR_REGISTRY}/${IMAGE_NAME}-frontend:${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/${IMAGE_NAME}-frontend:${IMAGE_TAG}
+                """
+            }
+        }
+        stage('Deploy to EKS') {
+            steps {
+                withVault(configuration: [vaultUrl: "${VAULT_ADDR}", vaultCredentialId: 'vault-token'], vaultSecrets: [
+                    [path: 'secret/healthcare/db', secretValues: [
+                        [envVar: 'DB_PASSWORD', vaultKey: 'db_password']
+                    ]]
+                ]) {
+                    sh """
+                        helm upgrade --install healthcare-app ./helm/healthcare-app \
+                          --set backend.image=${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
+                          --set frontend.image=${ECR_REGISTRY}/${IMAGE_NAME}-frontend:${IMAGE_TAG} \
+                          --set backend.dbPassword=${DB_PASSWORD} \
+                          --set postgresql.postgresqlPassword=${DB_PASSWORD} \
+                          ${HELM_VALUES} \
+                          --namespace healthcare-${ENV_NAME} --create-namespace
+                        """
+                }
+            }
+        }
+        stage('Inspector Scan') {
+            when {
+                expression { params.ENVIRONMENT == 'prod' }
+            }
+            steps {
+                sh '''
+                    aws inspector2 scan --resource-id arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/healthcare-eks --region ${AWS_REGION}
+                '''
+            }
+        }
+    }
+    post {
+        success {
+            sh """
+                aws ses send-email \
+                  --from ${SES_EMAIL} \
+                  --to ${SES_EMAIL} \
+                  --subject "Pipeline Success: Build #${env.BUILD_NUMBER} (${ENV_NAME})" \
+                  --text "Deployment to ${ENV_NAME} succeeded: ${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" \
+                  --region ${AWS_REGION}
+            """
+        }
+        failure {
+            sh """
+                aws ses send-email \
+                  --from ${SES_EMAIL} \
+                  --to ${SES_EMAIL} \
+                  --subject "Pipeline Failure: Build #${env.BUILD_NUMBER} (${ENV_NAME})" \
+                  --text "Pipeline failed for ${ENV_NAME}: ${currentBuild.result}" \
+                  --region ${AWS_REGION}
+            """
+        }
+        always {
+            archiveArtifacts artifacts: 'dependency-check-report.json, trivy-report.json, trivy-frontend-report.json', allowEmptyArchive: true
+            cleanWs()
+        }
+    }
+}
+```
+
+### Terraform Configuration
+<xaiArtifact artifact_id="890d401d-4780-407a-9f82-c0faf3de2f73" artifact_version_id="36f8ea9d-5257-412e-9741-3d553df7a6c0" title="terraform/main.tf" contentType="hcl">
+```hcl
+provider "aws" {
+  region = "us-east-1"
+}
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "3.14.0"
+  name = "healthcare-vpc"
+  cidr = "10.0.0.0/16"
+  azs  = ["us-east-1a", "us-east-1b"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+  enable_nat_gateway = true
+  single_nat_gateway = true
+}
+
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "18.26.6"
+  cluster_name    = "healthcare-eks"
+  cluster_version = "1.24"
+  vpc_id          = module.vpc.vpc_id
+  subnet_ids      = module.vpc.private_subnets
+  eks_managed_node_groups = {
+    workers = {
+      min_size     = 2
+      max_size     = 4
+      desired_size = 2
+      instance_types = ["t3.large"]
+    }
+  }
+}
+
+module "rds" {
+  source  = "terraform-aws-modules/rds/aws"
+  version = "4.0.0"
+  identifier = "healthcare-postgres"
+  engine     = "postgres"
+  engine_version = "12.7"
+  instance_class = "db.t3.medium"
+  allocated_storage = 20
+  db_name    = "patientdb"
+  username   = "admin"
+  password   = var.db_password
+  vpc_security_group_ids = [aws_security_group.rds.id]
+  subnet_ids = module.vpc.private_subnets
+  storage_encrypted = true
+  kms_key_id = aws_kms_key.healthcare.arn
+}
+
+resource "aws_security_group" "rds" {
+  vpc_id = module.vpc.vpc_id
+  ingress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+}
+
+resource "aws_kms_key" "healthcare" {
+  description = "KMS key for healthcare app"
+  enable_key_rotation = true
+}
+
+resource "aws_s3_bucket" "artifacts" {
+  bucket = "healthcare-artifacts"
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        kms_master_key_id = aws_kms_key.healthcare.arn
+        sse_algorithm     = "aws:kms"
+      }
+    }
+  }
+}
+
+resource "aws_ecr_repository" "healthcare_app" {
+  name = "healthcare-app"
+  encryption_configuration {
+    encryption_type = "KMS"
+    kms_key         = aws_kms_key.healthcare.arn
+  }
+}
+
+resource "aws_ecr_repository" "healthcare_app_frontend" {
+  name = "healthcare-app-frontend"
+  encryption_configuration {
+    encryption_type = "KMS"
+    kms_key         = aws_kms_key.healthcare.arn
+  }
+}
+
+resource "aws_security_group" "jenkins" {
+  vpc_id = module.vpc.vpc_id
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+}
+
+resource "aws_instance" "jenkins" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.large"
+  subnet_id     = module.vpc.public_subnets[0]
+  security_groups = [aws_security_group.jenkins.id]
+  iam_instance_profile = aws_iam_instance_profile.jenkins.name
+  user_data = <<-EOF
+              #!/bin/bash
+              yum update -y
+              yum install -y docker java-17-openjdk git aws-cli
+              systemctl start docker
+              systemctl enable docker
+              usermod -aG docker ec2-user
+              wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+              rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+              yum install -y jenkins
+              systemctl start jenkins
+              systemctl enable jenkins
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.31.3
+              wget https://github.com/jeremylong/DependencyCheck/releases/download/v7.1.1/dependency-check-7.1.1-release.zip
+              unzip dependency-check-7.1.1-release.zip -d /opt
+              EOF
+  tags = {
+    Name = "Jenkins-Server"
+  }
+}
+
+resource "aws_iam_role" "jenkins" {
+  name = "jenkins-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = { Service = "ec2.amazonaws.com" }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "jenkins_policy" {
+  role = aws_iam_role.jenkins.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:*",
+          "ecr:*",
+          "eks:*",
+          "rds:*",
+          "securityhub:*",
+          "inspector:*",
+          "kms:*",
+          "ses:*",
+          "cloudwatch:*"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "jenkins" {
+  name = "jenkins-profile"
+  role = aws_iam_role.jenkins.name
+}
+```
+
+<xaiArtifact artifact_id="897f7ca1-b59e-414e-b2c2-a36bead84827" artifact_version_id="dc99eb78-3113-4315-9419-fb2abb4de686" title="terraform/variables.tf" contentType="text/hcl">
+```hcl
+variable "db_password" {
+  description = "RDS PostgreSQL password"
+  type        = string
+  sensitive   = true
+}
+```
+
+<xaiArtifact artifact_id="b60e0e0c-ef6d-43a4-9d7b-b5bc12a42aff" artifact_version_id="823a8f69-baf6-4c0d-992e-aa6434690002" title="terraform/outputs.tf" contentType="text/hcl">
+```hcl
+output "eks_cluster_endpoint" {
+  description = "EKS cluster endpoint"
+  value       = module.eks.cluster_endpoint
+}
+
+output "rds_endpoint" {
+  description = "RDS PostgreSQL endpoint"
+  value       = module.rds.this_db_instance_endpoint
+}
+
+output "jenkins_url" {
+  description = "Jenkins server URL"
+  value       = "http://${aws_instance.jenkins.public_ip}:8080"
+}
+```
+
+---
+
+### Compliance Artifacts
+<xaiArtifact artifact_id="3034b15d-37ca-4792-ad38-d624e9a3596f" artifact_version_id="d02c7c2c-2fd7-48f5-b12a-41b54bc835b8" title="compliance/audit/aws-config-rules.yml" contentType="text/yaml">
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Config rules for HIPAA compliance
+Resources:
+  EncryptedVolumesRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      Source:
+        Owner: AWS
+        SourceIdentifier: EC2_VOLUME_INUSE_CHECK
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::Volume
+  RDSEncryptionRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      Source:
+        Owner: AWS
+        SourceIdentifier: RDS_STORAGE_KEYED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::RDS::DBInstance
+  S3EncryptionRule:
+    Type: AWS::Config::ConfigRule:
+    Properties:
+      Source:
+        Owner: AWS
+        SourceIdentifier: S3_BUCKET_SERVER_KEY_READING_ENCRYPTION
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+```
+
+<xaiArtifact artifact_id="bb762375-0d81-4a2a-a113-ce0b28607a6e" artifact_version_id="088be914-6d77-4faf-b4dd-57f3d4118409" title="compliance/policies/hipaa-checklist.md" contentType="text/markdown">
+```markdown
+# HIPAA Compliance Checklist
+
+## Administrative Safeguards
+- [x] Role-Based Access Control (RBAC) in EKS
+- [x] Vault for secrets management
+- [x] Audit logging in PostgreSQL
+- [x] CloudTrail for auditing
+
+## Physical Safeguards
+- [x] AWS secure data centers
+- [x] Restricted access to EC2 instance for Jenkins
+
+## Technical Safeguards
+- [x] KMS encryption for data at rest
+- [x] TLS for data in transit
+- [x] OWASP and Trivy vulnerability scans
+- [x] AWS Shield for DDoS protection
+
+## Monitoring and Auditing
+- [x] Prometheus/Grafana for monitoring
+- [x] Fluentd for centralized logging in CloudWatch
+- [x] 90-day log retention in S3
+- [x] Regular SecurityHub findings review
+```
+
+---
+
+### Ansible Configuration
+<xaiArtifact artifact_id="02acb2ed-6461-417d-8790-b04955ab6c5b" artifact_version_id="23fcc58a-6a68-4978-9d73-ef11f2b7b265" title="ansible/playbooks/jenkins-setup.yml" contentType="text/yaml">
+```yaml
+---
+- name: Configure Jenkins Server for DevSecOps
+  hosts: jenkins
+  become: yes
+  tasks:
+    - name: Install required packages
