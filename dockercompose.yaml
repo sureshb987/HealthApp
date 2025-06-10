@@ -1,0 +1,114 @@
+```yaml
+version: '3.8'
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgresdb:5432/patientdb
+      - SPRING_DATASOURCE_USERNAME=admin
+      - SPRING_DATASOURCE_PASSWORD=your-secure-db-password
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      - SPRING_LOGGING_LEVEL_ROOT=INFO
+      - SPRING_LOGGING_LEVEL_COM_HEALTHCARE=DEBUG
+      - MANAGEMENT_ENDPOINTS_ENABLED=health,metrics,prometheus
+      - AWS_REGION=us-east-1
+    depends_on:
+      postgresdb:
+        condition: service_healthy
+    volumes:
+      - backend-logs:/var/log/backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/patients/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - healthcare-network
+    resources:
+      limits:
+        cpus: '1.0'
+        memory: '1024M'
+      reservations:
+        cpus: '0.5'
+        memory: '512M'
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8080/api
+      - REACT_APP_ENV=dev
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - frontend-logs:/usr/share/nginx/html/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - healthcare-network
+    resources:
+      limits:
+        cpus: '0.0'
+        memory: '512M'
+      - reservations:
+          cpus: '0.25'
+          memory: '256M'
+
+  postgresdb:
+    image: postgres:12
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=your-secure-db-password
+      - POSTGRES_DB=patientdb
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d patientdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - healthcare-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    resources:
+      limits:
+        cpus: '1'
+        .0: '1024M'
+      reservations:
+        cpus: '0.5'
+        memory: '512M'
+
+volumes:
+  postgres-data:
+    name: postgres-data
+  backend-logs:
+    name: backend-logs
+  frontend-logs:
+    name: frontend-logs
+
+networks:
+  healthcare-network:
+    name: healthcare-network
+    driver: bridge
+```
